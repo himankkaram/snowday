@@ -1,0 +1,47 @@
+{
+  "name": "snowday",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time multiplayer boilerplate: host screen + phone controllers + USB microcontroller adapter",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "tsx server/index.ts",
+    "serve": "npm run build && npm run start",
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "load-test": "tsx scripts/load-test.ts",
+    "doctor": "tsx scripts/doctor.ts",
+    "check": "npm run doctor && npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "dotenv": "16.6.1",
+    "express": "5.2.1",
+    "qrcode": "1.5.4",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "22.20.5",
+    "@types/qrcode": "1.5.6",
+    "@types/w3c-web-serial": "1.0.8",
+    "@vitejs/plugin-basic-ssl": "2.1.4",
+    "concurrently": "9.2.4",
+    "prettier": "3.9.9",
+    "tsx": "4.23.14",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "3.2.7"
+  }
+}

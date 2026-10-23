@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Snow Day · Player</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="phone">
+      <header>
+        <strong>Room <span id="room">----</span></strong>
+        <span id="net" class="pill warn">connecting</span>
+      </header>
+
+      <section id="join-view" class="stack">
+        <label
+          >Room code
+          <input id="room-input" maxlength="4" autocapitalize="characters" autocomplete="off"
+        /></label>
+        <label>Your name <input id="name-input" maxlength="16" autocomplete="nickname" /></label>
+        <button id="join-btn" class="primary">Join</button>
+        <p id="join-error" class="feedback err" role="alert"></p>
+      </section>
+
+      <section id="play-view" class="stack" hidden>
+        <p id="phase" class="muted">Waiting for the round to start</p>
+        <label>Aim <input id="aim" type="range" min="-1" max="1" step="0.01" value="0" /></label>
+        <button id="throw" class="throw-btn">Throw</button>
+        <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+        <div class="row">
+          <button id="motion-btn">Use motion to throw</button>
+          <button id="calibrate-btn" hidden>Calibrate aim</button>
+        </div>
+        <p id="motion-status" class="muted" style="font-size: 0.85rem"></p>
+      </section>
+    </main>
+    <script type="module" src="/src/phone/main.ts"></script>
+  </body>
+</html>

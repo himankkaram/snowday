@@ -1,0 +1,234 @@
+/* Placeholder styling. The early-2000s look is hackathon work; keep this file small until then. */
+:root {
+  color-scheme: light dark;
+  --bg: #e9f1f8;
+  --ink: #12263a;
+  --muted: #5b6f82;
+  --panel: #ffffff;
+  --line: #c4d3e0;
+  --accent: #1f6fd1;
+  --ok: #1e8a4c;
+  --bad: #c0392b;
+  --warn: #b7791f;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1b27;
+    --ink: #e6eef6;
+    --muted: #93a7ba;
+    --panel: #172636;
+    --line: #2b4157;
+    --accent: #5aa2ff;
+  }
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0.6em 1em;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+input,
+select {
+  padding: 0.55em 0.7em;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+}
+.pill {
+  display: inline-block;
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  font-size: 0.85em;
+  border: 1px solid currentColor;
+}
+.pill.ok {
+  color: var(--ok);
+}
+.pill.bad {
+  color: var(--bad);
+}
+.pill.warn {
+  color: var(--warn);
+}
+.muted {
+  color: var(--muted);
+}
+
+/* ---- landing ---- */
+.landing {
+  max-width: 34rem;
+  margin: 10vh auto;
+  padding: 0 1.25rem;
+  line-height: 1.5;
+}
+.landing a {
+  color: var(--accent);
+}
+
+/* ---- host ---- */
+.host {
+  display: grid;
+  grid-template-columns: 1fr 17rem;
+  height: 100vh;
+}
+.host canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: #dfeaf4;
+}
+.side {
+  padding: 1rem;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.side h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+.side ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.95rem;
+}
+.side li {
+  padding: 0.15rem 0;
+}
+.qr {
+  width: 100%;
+  image-rendering: pixelated;
+  background: #fff;
+  border-radius: 6px;
+}
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.debug {
+  position: fixed;
+  left: 0.5rem;
+  bottom: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  background: rgba(0, 0, 0, 0.75);
+  color: #d7f7d7;
+  font:
+    12px/1.4 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+  border-radius: 4px;
+  white-space: pre;
+  pointer-events: none;
+}
+.debug[hidden] {
+  display: none;
+}
+
+/* ---- phone ---- */
+.phone {
+  max-width: 28rem;
+  margin: 0 auto;
+  padding: 1rem 1rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 100dvh;
+}
+.phone header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.throw-btn {
+  width: 100%;
+  min-height: 9rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.throw-btn:active {
+  transform: scale(0.98);
+}
+.feedback {
+  min-height: 2.2em;
+  font-size: 1.2rem;
+  font-weight: 600;
+  text-align: center;
+}
+.feedback.hit {
+  color: var(--ok);
+}
+.feedback.miss {
+  color: var(--muted);
+}
+.feedback.err {
+  color: var(--bad);
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .throw-btn:active {
+    transform: none;
+  }
+}
