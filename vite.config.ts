@@ -20,7 +20,15 @@ export default defineConfig(({ mode }) => {
       port: Number(env.CLIENT_PORT ?? 5173),
       strictPort: true,
       // Allow tunnel hostnames (cloudflared / ngrok) as well as LAN IPs.
-      allowedHosts: ['.trycloudflare.com', '.ngrok-free.app', '.ngrok.app', 'localhost'],
+      allowedHosts: [
+        '.trycloudflare.com',
+        '.ngrok-free.app',
+        '.ngrok.app',
+        '.app.github.dev', // GitHub Codespaces
+        'localhost',
+      ],
+      // In Codespaces the page is served on 443 (https), so hot reload must connect there too.
+      hmr: process.env.CODESPACES ? { clientPort: 443 } : undefined,
       proxy: {
         '/socket.io': { target: `http://localhost:${serverPort}`, ws: true },
         '/health': { target: `http://localhost:${serverPort}` },

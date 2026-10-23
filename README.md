@@ -11,6 +11,16 @@ A USB microcontroller board steers and gives physical feedback. Keyboard always 
 
 What is verified vs not is listed at the bottom. Read that before relying on anything.
 
+## Try it with no install (GitHub Codespaces)
+
+1. On the repo page on GitHub: **Code → Codespaces → Create codespace on main**.
+2. Wait for setup (about 2 minutes the first time). The terminal prints a **host screen link**: Ctrl/Cmd + click it.
+3. Scan the QR code with a phone. The link is https, so motion throws work.
+
+If phones see a GitHub login page instead of the game: **PORTS** tab, right-click port 5173,
+**Port Visibility → Public**. Stop the Codespace when you're done (it uses your free monthly hours).
+For the actual event, run it locally (below): the USB board and venue demo shouldn't depend on Codespaces.
+
 ## Setup (all platforms)
 
 1. Install **Node 22 LTS** (22.12 or newer). Check: `node -v`.

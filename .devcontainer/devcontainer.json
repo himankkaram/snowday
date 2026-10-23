@@ -1,0 +1,14 @@
+{
+  "name": "Snow Day",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "postCreateCommand": "npm ci --no-audit --no-fund",
+  "postAttachCommand": "bash .devcontainer/start.sh",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": { "label": "Snow Day (game)", "onAutoForward": "silent" },
+    "3000": { "label": "game server (internal)", "onAutoForward": "ignore" }
+  },
+  "customizations": {
+    "vscode": { "extensions": ["esbenp.prettier-vscode"] }
+  }
+}
