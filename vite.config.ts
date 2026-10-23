@@ -11,6 +11,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     root: 'client',
+    // Read .env from the project root, not client/ (Vite looks next to `root` by default),
+    // so VITE_PUBLIC_URL reaches the browser code.
+    envDir: process.cwd(),
     plugins: useHttps ? [basicSsl()] : [],
     server: {
       host: true, // listen on the LAN, not just localhost, so phones can reach it
