@@ -146,22 +146,31 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   actionsThisSecond++;
   lastLatencyMs = Date.now() - a.serverTime;
   if (a.action !== 'throw') return;
-  const { state: next, outcome } = R.resolveThrow(state, a.aim, a.playerId);
-  state = next;
-  if (outcome === 'ignored') return;
-  markers.push({
-    x: a.aim,
-    hit: outcome === 'hit',
-    name: names.get(a.playerId) ?? '?',
-    born: performance.now(),
-  });
-  if (markers.length > 40) markers.shift();
-  socket.emit(EV.HOST_EVENT, { type: outcome, playerId: a.playerId, actionSeq: a.seq });
-  if (outcome === 'hit') {
-    active.sendHitFeedback();
-    flashUntil = performance.now() + 150;
-  }
+  // Launches a snowball (or ignores it during cooldown). The result comes later, in frame().
+  state = R.resolveThrow(state, a.aim, a.playerId, a.seq).state;
 });
+
+/** Called every frame for snowballs that just reached the rider: show it and tell the thrower. */
+function reportLandings() {
+  for (const l of state.landed) {
+    markers.push({
+      x: l.x,
+      hit: l.hit,
+      name: names.get(l.playerId) ?? '?',
+      born: performance.now(),
+    });
+    if (markers.length > 40) markers.shift();
+    socket.emit(EV.HOST_EVENT, {
+      type: l.hit ? 'hit' : 'miss',
+      playerId: l.playerId,
+      actionSeq: l.seq,
+    });
+    if (l.hit) {
+      active.sendHitFeedback();
+      flashUntil = performance.now() + 150;
+    }
+  }
+}
 
 function startRound() {
   const throwers = roster.players.filter((p) => p.connected && p.id !== state.riderId).length;
@@ -213,6 +222,7 @@ function frame(now: number) {
   last = now;
   fps = fps * 0.9 + (1000 / Math.max(dt, 1)) * 0.1;
   state = R.step(state, dt, currentSteer());
+  reportLandings();
   draw(now);
   drawDebug();
   requestAnimationFrame(frame);
@@ -225,17 +235,31 @@ function draw(now: number) {
   ctx.fillStyle = now < flashUntil ? '#ffd6d6' : '#dfeaf4';
   ctx.fillRect(0, 0, w, h);
 
-  // throw markers fade over 1.5 s
+  // snowballs in the air: fall from the top of the screen to the rider's line
+  const riderY = h * 0.72;
+  const ballR = Math.max(6, (R.SNOWBALL_RADIUS * w) / 2);
+  for (const b of state.snowballs) {
+    const y = b.progress * riderY;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#12263a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(toPx(b.x), y, ballR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // landed snowballs: a fading splat with the thrower's name (green = hit, grey = miss)
   for (const m of markers) {
-    const age = (now - m.born) / 1500;
+    const age = (now - m.born) / 1000;
     if (age > 1) continue;
     ctx.globalAlpha = 1 - age;
     ctx.fillStyle = m.hit ? '#1e8a4c' : '#7f8c99';
     ctx.beginPath();
-    ctx.arc(toPx(m.x), h * 0.35 + age * h * 0.35, 10, 0, Math.PI * 2);
+    ctx.arc(toPx(m.x), riderY, ballR * (1 + age), 0, Math.PI * 2);
     ctx.fill();
     ctx.font = '13px system-ui';
-    ctx.fillText(m.name, toPx(m.x) + 14, h * 0.35 + age * h * 0.35 + 4);
+    ctx.fillText(m.name, toPx(m.x) + ballR + 8, riderY - 10);
   }
   ctx.globalAlpha = 1;
 
