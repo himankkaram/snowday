@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => {
         '.trycloudflare.com',
         '.ngrok-free.app',
         '.ngrok.app',
+        '.ngrok-free.dev',
+        '.ngrok.dev',
         '.app.github.dev', // GitHub Codespaces
         'localhost',
       ],
