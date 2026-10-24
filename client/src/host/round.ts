@@ -14,6 +14,12 @@ export const ROUND_MS = 60_000;
 export const RIDER_SPEED = 1.6; // world units per second at full steer (world x is -1..1)
 export const RIDER_HALF_WIDTH = 0.08;
 export const STEER_SMOOTHING_S = 0.08;
+export const BASE_COOLDOWN_MS = 1000;
+export const MAX_COOLDOWN_MS = 4000;
+
+/** Each thrower's cooldown grows with the square root of the number of throwers, capped. */
+export const throwCooldownMs = (players: number) =>
+  Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * Math.sqrt(Math.max(1, players)));
 
 export interface RoundState {
   phase: Phase;
@@ -23,15 +29,27 @@ export interface RoundState {
   steer: number; // smoothed input actually applied
   hits: number;
   throws: number;
+  players: number; // throwers, locked when the round starts
+  lastThrowAt: Record<string, number>; // round time (ms) of each player's last throw
 }
 
 export function newRound(riderId: string | null = null): RoundState {
-  return { phase: 'lobby', timeLeftMs: ROUND_MS, riderId, riderX: 0, steer: 0, hits: 0, throws: 0 };
+  return {
+    phase: 'lobby',
+    timeLeftMs: ROUND_MS,
+    riderId,
+    riderX: 0,
+    steer: 0,
+    hits: 0,
+    throws: 0,
+    players: 1,
+    lastThrowAt: {},
+  };
 }
 
-export function start(s: RoundState): RoundState {
+export function start(s: RoundState, players = 1): RoundState {
   if (s.phase === 'playing') return s;
-  return { ...newRound(s.riderId), phase: 'playing' };
+  return { ...newRound(s.riderId), phase: 'playing', players: Math.max(1, players) };
 }
 
 export function reset(s: RoundState): RoundState {
@@ -58,11 +76,22 @@ export type ThrowOutcome = 'hit' | 'miss' | 'ignored';
 export function resolveThrow(
   s: RoundState,
   aim: number,
+  playerId = 'anon',
 ): { state: RoundState; outcome: ThrowOutcome } {
   if (s.phase !== 'playing') return { state: s, outcome: 'ignored' };
+  const now = ROUND_MS - s.timeLeftMs;
+  const last = s.lastThrowAt[playerId];
+  if (last !== undefined && now - last < throwCooldownMs(s.players)) {
+    return { state: s, outcome: 'ignored' }; // still cooling down
+  }
   const hit = Math.abs(clamp(aim) - s.riderX) <= RIDER_HALF_WIDTH;
   return {
-    state: { ...s, throws: s.throws + 1, hits: s.hits + (hit ? 1 : 0) },
+    state: {
+      ...s,
+      throws: s.throws + 1,
+      hits: s.hits + (hit ? 1 : 0),
+      lastThrowAt: { ...s.lastThrowAt, [playerId]: now },
+    },
     outcome: hit ? 'hit' : 'miss',
   };
 }
