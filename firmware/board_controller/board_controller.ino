@@ -145,7 +145,9 @@ float readTiltDeg() {
   float ax, ay, az;
   if (!readAccel(ax, ay, az)) return NAN;
   // Gravity-only tilt: fine for a slowly rocking board, no gyro drift to fight.
-  float deg = USE_ROLL ? atan2(ay, az) * 180.0 / PI
+  // fabs(az) lets the sensor be mounted chip-up OR upside down (under the deck) without the
+  // angle wrapping at +-180 deg. If it then steers the wrong way, set INVERT = true.
+  float deg = USE_ROLL ? atan2(ay, fabs(az)) * 180.0 / PI
                        : atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
   return INVERT ? -deg : deg;
 }
