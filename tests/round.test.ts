@@ -38,15 +38,48 @@ describe('round state machine', () => {
   });
 });
 
-describe('placeholder hit rule', () => {
-  it('hits when aim is on the rider, misses otherwise, counts both', () => {
-    let s = R.start(R.newRound());
-    const hit = R.resolveThrow(s, 0.05, 'a');
-    expect(hit.outcome).toBe('hit');
-    s = hit.state;
-    const miss = R.resolveThrow(s, 0.9, 'b');
-    expect(miss.outcome).toBe('miss');
-    expect(miss.state).toMatchObject({ hits: 1, throws: 2 });
+describe('snowballs', () => {
+  const flight = R.SNOWBALL_FLIGHT_MS;
+
+  it('counts the throw straight away but not the hit until it lands', () => {
+    let s = R.resolveThrow(R.start(R.newRound()), 0, 'a').state;
+    expect(s).toMatchObject({ throws: 1, hits: 0 });
+    s = run(s, flight / 2, 0);
+    expect(s.hits).toBe(0);
+    expect(s.snowballs).toHaveLength(1);
+  });
+  it('hits a rider who stays put', () => {
+    let s = R.resolveThrow(R.start(R.newRound()), 0, 'a').state;
+    s = run(s, flight + 50, 0);
+    expect(s).toMatchObject({ hits: 1, throws: 1 });
+    expect(s.snowballs).toHaveLength(0);
+  });
+  it('misses when aimed away from the rider', () => {
+    let s = R.resolveThrow(R.start(R.newRound()), 0.9, 'a').state;
+    s = run(s, flight + 50, 0);
+    expect(s).toMatchObject({ hits: 0, throws: 1 });
+  });
+  it('lets the rider dodge while it is in the air', () => {
+    let s = R.resolveThrow(R.start(R.newRound()), 0, 'a').state;
+    s = run(s, flight + 50, 1);
+    expect(s).toMatchObject({ hits: 0, throws: 1 });
+  });
+  it('reports each landing exactly once, with the thrower and their action number', () => {
+    let s = R.resolveThrow(R.start(R.newRound()), 0, 'a', 7).state;
+    const landings: R.Landing[] = [];
+    for (let t = 0; t < flight + 500; t += 16) {
+      s = R.step(s, 16, 0);
+      landings.push(...s.landed);
+    }
+    expect(landings).toEqual([{ playerId: 'a', seq: 7, x: 0, hit: true }]);
+  });
+  it('drops snowballs still in the air when the round ends', () => {
+    let s = run(R.start(R.newRound()), R.ROUND_MS - 100, 0);
+    s = R.resolveThrow(s, 0, 'a').state;
+    s = run(s, flight + 50, 0);
+    expect(s.phase).toBe('over');
+    expect(s).toMatchObject({ hits: 0, throws: 1 });
+    expect(s.snowballs).toHaveLength(0);
   });
 });
 
