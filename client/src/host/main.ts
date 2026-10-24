@@ -146,7 +146,7 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   actionsThisSecond++;
   lastLatencyMs = Date.now() - a.serverTime;
   if (a.action !== 'throw') return;
-  const { state: next, outcome } = R.resolveThrow(state, a.aim);
+  R.resolveThrow(state, a.aim, a.playerId);
   state = next;
   if (outcome === 'ignored') return;
   markers.push({
@@ -164,7 +164,8 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
 });
 
 function startRound() {
-  state = R.start(state);
+  const throwers = roster.players.filter((p) => p.connected && p.id !== state.riderId).length;
+  state = R.start(state, throwers);
   active.setLedEffect('idle');
 }
 function resetRound() {
