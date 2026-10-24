@@ -1,62 +1,67 @@
 /*
- * Snow Day board controller — ESP32 + ADXL345 or MPU-6050 accelerometer, USB serial.
- * The sensor type is detected automatically at start-up.
+ * Snow Day board controller
  *
- * STATUS: compiles for ESP32 (core 3.3.12); not yet run on hardware. Test it with the
- * sequence in docs/HARDWARE.md before relying on it.
+ * This runs on the ESP32 strapped to the skateboard. It reads how far the board
+ * is tilted, turns that into a steering number between -1 (full left) and 1
+ * (full right), and sends it to the laptop over the USB cable. When the game
+ * says the rider got hit, it buzzes.
  *
- * Arduino IDE setup:
- *   Boards Manager: install "esp32 by Espressif Systems"; select "ESP32 Dev Module".
- *   No extra libraries needed: talks to the sensor directly over I2C with Wire.
+ * Works with either an ADXL345 or an MPU-6050 sensor. It figures out which one
+ * is plugged in by itself, so you don't need to change anything.
  *
- * Wiring (classic ESP32 DevKit pin numbers; check your board's pinout):
- *   Sensor VCC -> 3V3      Sensor GND -> GND
- *   Sensor SDA -> GPIO 21  Sensor SCL -> GPIO 22
- *   ADXL345 only: CS -> 3V3 (selects I2C mode), SDO -> GND (address 0x53)
- *   Grove buzzer instead of a motor: SIG -> GPIO 25, VCC -> 3V3, GND -> GND
- *   LED: GPIO 4 -> 220 ohm resistor -> LED long leg; LED short leg -> GND
- *   Vibration: GPIO 25 -> IN/SIG of a vibration MOTOR MODULE (has its own transistor),
- *              module VCC -> 3V3 (or 5V if the module says so), module GND -> GND.
- *   NEVER wire a bare motor straight to a GPIO pin. See docs/HARDWARE.md for the
- *   transistor + diode circuit if you only have a bare motor.
+ * To upload: in the Arduino IDE, install "esp32 by Espressif Systems" from the
+ * Boards Manager and pick "ESP32 Dev Module". No extra libraries needed.
  *
- * Serial protocol (115200 baud, newline-terminated) — must match shared/protocol.ts:
- *   board -> host:  S,<steer -1..1>   ~50/s
- *                   I,<info text>
- *   host -> board:  H            hit: buzz + flash
- *                   L,<effect>   off | idle | warn | hit
- *                   C            recalibrate neutral
+ * Messages to and from the laptop (one per line, 115200 baud).
+ * If you change these, change shared/protocol.ts too or the game stops listening.
+ *   We send:     S,<steer>   steering value, about 50 times a second
+ *                I,<text>    info for debugging (sensor found, calibrated, etc.)
+ *   We receive:  H           rider got hit: buzz
+ *                L,<effect>  LED mode (we have no LED, so this is ignored)
+ *                C           recalibrate (rider stands still and level first)
  */
 #include <Wire.h>
 #include <math.h>
 
-// ---------- pins ----------
 const int PIN_SDA = 21;
 const int PIN_SCL = 22;
-const int PIN_LED = 4;
-const int PIN_MOTOR = 25;
+const int PIN_MOTOR = 25;  // buzzer or vibration module
 
-// ---------- tuning ----------
-const bool USE_ROLL = false;        // true: steer from rotation about the X axis; false: Y axis
-const bool INVERT = false;         // flip if leaning left steers right
-const float MAX_TILT_DEG = 12.0;   // tilt that gives full lock; a low board only rocks ~10-15 deg
-const float DEADZONE = 0.08;       // ignore wobble within 8% of full lock
-const float FILTER_ALPHA = 0.2;    // low-pass at 100 Hz sampling; lower = smoother but laggier
-const unsigned long SAMPLE_MS = 10;   // 100 Hz sensor reads
-const unsigned long SEND_MS = 20;     // 50 Hz serial output
-const unsigned long HIT_MS = 250;     // buzz length per hit
-const unsigned long MAX_BUZZ_MS = 1500; // safety cap on continuous buzzing
+// ---------- Things you'll probably want to tweak while testing ----------
 
-// ---------- state ----------
-float neutralDeg = 0;
-float filteredDeg = 0;
+// Which way the sensor is mounted. If tilting the board does nothing much,
+// try flipping USE_ROLL. If left steers right, flip INVERT.
+const bool USE_ROLL = false;
+const bool INVERT = false;
+
+// How many degrees of tilt counts as "full lock". The board only rocks about
+// 10-15 degrees, so keep this small or the rider can never turn fully.
+const float MAX_TILT_DEG = 12.0;
+
+// Small wobbles from just standing on the board are ignored. 0.08 means the
+// first 8% of tilt in either direction does nothing.
+const float DEADZONE = 0.08;
+
+// Smoothing. Lower = steadier but slower to react, higher = twitchier.
+const float FILTER_ALPHA = 0.2;
+
+const unsigned long SAMPLE_MS = 10;      // read the sensor 100 times a second
+const unsigned long SEND_MS = 20;        // send steering 50 times a second
+const unsigned long HIT_MS = 250;        // how long one hit buzzes
+const unsigned long MAX_BUZZ_MS = 1500;  // never buzz longer than this in one go, even if hits pile up
+
+// ---------- Running state ----------
+float neutralDeg = 0;   // the tilt reading when the rider is standing level
+float filteredDeg = 0;  // smoothed tilt reading
 bool sensorOk = false;
 unsigned long lastSample = 0, lastSend = 0, lastSensorRetry = 0;
 unsigned long hitUntil = 0, buzzStartedAt = 0;
-String ledEffect = "off";
-String inbox;
+String inbox;  // collects incoming characters until we get a full line
 
-// ---------- accelerometer (auto-detects ADXL345 or MPU-6050) ----------
+// ---------- Talking to the sensor ----------
+// Both sensors use I2C: each chip has an address, and you read or write
+// numbered "registers" on it to configure it and get readings.
+
 enum SensorType { SENSOR_NONE, SENSOR_ADXL345, SENSOR_MPU6050 };
 SensorType sensorType = SENSOR_NONE;
 uint8_t sensorAddr = 0;
@@ -81,27 +86,29 @@ int regRead(uint8_t addr, uint8_t reg) {
   return Wire.read();
 }
 
+// Looks for either sensor at its usual addresses and switches it on.
 bool sensorInit() {
   sensorType = SENSOR_NONE;
-  // ADXL345: 0x53 when SDO is low (usual), 0x1D when SDO is high. DEVID register 0x00 reads 0xE5.
+
+  // An ADXL345 always answers 0xE5 when you ask for its ID, so that's how we know it's one.
   const uint8_t adxlAddrs[] = {0x53, 0x1D};
   for (uint8_t a : adxlAddrs) {
     if (i2cPresent(a) && regRead(a, 0x00) == 0xE5) {
-      regWrite(a, 0x31, 0x08);  // DATA_FORMAT: full resolution, +-2 g
-      regWrite(a, 0x2C, 0x0A);  // BW_RATE: 100 Hz
-      regWrite(a, 0x2D, 0x08);  // POWER_CTL: start measuring
+      regWrite(a, 0x31, 0x08);  // range +-2 g, which is plenty for tilting
+      regWrite(a, 0x2C, 0x0A);  // 100 readings a second
+      regWrite(a, 0x2D, 0x08);  // start measuring (it starts asleep)
       sensorType = SENSOR_ADXL345;
       sensorAddr = a;
       Serial.printf("I,sensor ADXL345 found at 0x%02X\n", a);
       return true;
     }
   }
-  // MPU-6050: 0x68, or 0x69 if AD0 is tied high.
+
   const uint8_t mpuAddrs[] = {0x68, 0x69};
   for (uint8_t a : mpuAddrs) {
-    if (i2cPresent(a) && regWrite(a, 0x6B, 0x00)) {  // PWR_MGMT_1: wake up
-      regWrite(a, 0x1C, 0x00);                        // ACCEL_CONFIG: +-2 g
-      regWrite(a, 0x1A, 0x03);                        // CONFIG: on-chip low-pass ~44 Hz
+    if (i2cPresent(a) && regWrite(a, 0x6B, 0x00)) {  // wake it up (it starts asleep)
+      regWrite(a, 0x1C, 0x00);                        // range +-2 g
+      regWrite(a, 0x1A, 0x03);                        // built-in smoothing to cut vibration noise
       sensorType = SENSOR_MPU6050;
       sensorAddr = a;
       Serial.printf("I,sensor MPU-6050 found at 0x%02X (WHO_AM_I=0x%02X)\n", a, regRead(a, 0x75));
@@ -111,7 +118,7 @@ bool sensorInit() {
   return false;
 }
 
-// Reads acceleration in g. Returns false on I2C failure.
+// Gets acceleration on each axis in g (1 g = gravity). Returns false if the read fails.
 bool readAccel(float &ax, float &ay, float &az) {
   if (sensorType == SENSOR_NONE) return false;
   uint8_t startReg = sensorType == SENSOR_ADXL345 ? 0x32 : 0x3B;
@@ -119,16 +126,19 @@ bool readAccel(float &ax, float &ay, float &az) {
   Wire.write(startReg);
   if (Wire.endTransmission(false) != 0) return false;
   if (Wire.requestFrom((int)sensorAddr, 6) != 6) return false;
+
+  // Each axis comes as 2 bytes. The two chips put the bytes in opposite order
+  // and use different scales, which is why there are two branches here.
   uint8_t b[6];
   for (int i = 0; i < 6; i++) b[i] = Wire.read();
   int16_t rx, ry, rz;
   float lsbPerG;
-  if (sensorType == SENSOR_ADXL345) {  // little-endian, 256 LSB/g in full resolution
+  if (sensorType == SENSOR_ADXL345) {
     rx = (int16_t)(b[1] << 8 | b[0]);
     ry = (int16_t)(b[3] << 8 | b[2]);
     rz = (int16_t)(b[5] << 8 | b[4]);
     lsbPerG = 256.0;
-  } else {  // MPU-6050: big-endian, 16384 LSB/g at +-2 g
+  } else {
     rx = (int16_t)(b[0] << 8 | b[1]);
     ry = (int16_t)(b[2] << 8 | b[3]);
     rz = (int16_t)(b[4] << 8 | b[5]);
@@ -140,20 +150,20 @@ bool readAccel(float &ax, float &ay, float &az) {
   return true;
 }
 
-// Returns tilt in degrees, or NAN on I2C failure.
+// Works out the board's tilt in degrees from which way gravity is pulling.
+// Returns NAN (not a number) if the sensor didn't answer.
 float readTiltDeg() {
   float ax, ay, az;
   if (!readAccel(ax, ay, az)) return NAN;
-  // Gravity-only tilt: fine for a slowly rocking board, no gyro drift to fight.
-  // fabs(az) lets the sensor be mounted chip-up OR upside down (under the deck) without the
-  // angle wrapping at +-180 deg. If it then steers the wrong way, set INVERT = true.
+  // Using fabs(az) means it still works if the sensor is mounted upside down under the deck.
   float deg = USE_ROLL ? atan2(ay, fabs(az)) * 180.0 / PI
                        : atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
   return INVERT ? -deg : deg;
 }
 
+// Records "level" as whatever the board reads right now, averaged over about
+// a second. Have the rider stand still in the middle before this runs.
 void calibrate() {
-  // Rider stands still and level. Average ~1 s of readings.
   float sum = 0;
   int n = 0;
   for (int i = 0; i < 100; i++) {
@@ -161,7 +171,7 @@ void calibrate() {
     if (!isnan(d)) { sum += d; n++; }
     delay(10);
   }
-  if (n > 50) {
+  if (n > 50) {  // only trust it if most readings worked
     neutralDeg = sum / n;
     filteredDeg = neutralDeg;
     Serial.printf("I,calibrated neutral=%.2f deg\n", neutralDeg);
@@ -170,58 +180,44 @@ void calibrate() {
   }
 }
 
-// ---------- outputs ----------
-void updateOutputs(unsigned long now) {
-  bool hitting = now < hitUntil;
-  if (hitting && buzzStartedAt == 0) buzzStartedAt = now;
-  if (!hitting) buzzStartedAt = 0;
-  bool buzzSafe = buzzStartedAt == 0 || now - buzzStartedAt < MAX_BUZZ_MS;
-  digitalWrite(PIN_MOTOR, (hitting && buzzSafe) ? HIGH : LOW);
 
-  bool led;
-  if (hitting) led = (now / 60) % 2;                 // fast flash during a hit
-  else if (ledEffect == "warn") led = (now / 250) % 2;
-  else if (ledEffect == "idle") led = (now / 1000) % 2 == 0 && (now % 1000) < 80; // heartbeat
-  else if (ledEffect == "hit") led = true;
-  else led = false;
-  digitalWrite(PIN_LED, led ? HIGH : LOW);
-}
-
+// Deals with one line sent from the laptop. Anything we don't recognise
+// (like the game's LED messages) is simply ignored.
 void handleCommand(String cmd) {
   cmd.trim();
   if (cmd == "H") {
     hitUntil = millis() + HIT_MS;
-  } else if (cmd.startsWith("L,")) {
-    String e = cmd.substring(2);
-    if (e == "off" || e == "idle" || e == "warn" || e == "hit") ledEffect = e;
   } else if (cmd == "C") {
     calibrate();
   }
 }
 
+// setup() runs once when the board powers on.
 void setup() {
   Serial.begin(115200);
-  pinMode(PIN_LED, OUTPUT);
   pinMode(PIN_MOTOR, OUTPUT);
-  digitalWrite(PIN_MOTOR, LOW);  // motor OFF before anything else
+  digitalWrite(PIN_MOTOR, LOW);  // make sure nothing buzzes on start-up
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);
-  delay(200);
+  delay(200);  // give the sensor a moment to power up
   sensorOk = sensorInit();
   if (sensorOk) calibrate();
   else Serial.println("I,no ADXL345/MPU-6050 found: check SDA/SCL/3V3/GND (ADXL345: CS to 3V3)");
 }
 
+// loop() runs over and over forever. Nothing in here waits around, so reading
+// the sensor, sending steering and buzzing can all happen at the same time.
 void loop() {
   unsigned long now = millis();
 
-  // Read commands from the host without blocking.
+  // Collect characters from the laptop until we have a full line, then act on it.
   while (Serial.available()) {
     char c = (char)Serial.read();
     if (c == '\n') { handleCommand(inbox); inbox = ""; }
     else if (inbox.length() < 32) inbox += c;
   }
 
+  // If the sensor isn't working (e.g. a wire came loose), try to find it again once a second.
   if (!sensorOk && now - lastSensorRetry > 1000) {
     lastSensorRetry = now;
     sensorOk = sensorInit();
@@ -233,8 +229,9 @@ void loop() {
     lastSample = now;
     float d = readTiltDeg();
     if (isnan(d)) {
-      sensorOk = false;  // loose wire: steer goes neutral, retry next second
+      sensorOk = false;  // lost the sensor: steering goes back to centre until it's found again
     } else {
+      // Move the smoothed value a little towards the new reading each time.
       filteredDeg += (d - filteredDeg) * FILTER_ALPHA;
     }
   }
@@ -243,7 +240,9 @@ void loop() {
     lastSend = now;
     float steer = 0;
     if (sensorOk) {
+      // How far from level we are, as a fraction of full lock.
       steer = (filteredDeg - neutralDeg) / MAX_TILT_DEG;
+      // Ignore tiny wobbles, then stretch the rest so it still goes smoothly from 0 to 1.
       float a = fabs(steer);
       steer = a <= DEADZONE ? 0 : (steer > 0 ? 1 : -1) * fmin(1.0, (a - DEADZONE) / (1 - DEADZONE));
     }
