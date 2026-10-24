@@ -65,7 +65,11 @@ onEveryConnect(socket, () => {
 socket.on('disconnect', () => setNet('offline', 'bad'));
 socket.on(EV.ERROR, (e) => feedback(e.code === 'RATE_LIMITED' ? 'Slow down!' : e.message, 'err'));
 socket.on(EV.GAME_EVENT, (e) => {
-  if (e.type === 'hit') {
+  if (e.type === 'thrown') startRecharge(e.cooldownMs ?? 0);
+  else if (e.type === 'cooldown') {
+    startRecharge(e.cooldownMs ?? 0);
+    feedback('Recharging…');
+  } else if (e.type === 'hit') {
     feedback('Hit!', 'hit');
     navigator.vibrate?.(80); // Android only; iOS ignores it
   } else feedback('Missed', 'miss');
@@ -82,8 +86,26 @@ socket.on(EV.STATE, (s: HostState) => {
 // ---------- throwing ----------
 const aimSlider = $<HTMLInputElement>('aim');
 
+// Recharge bar. The host decides the cooldown and tells us how long it is; this just shows it
+// and stops us sending throws the host would ignore anyway.
+let readyAt = 0;
+function startRecharge(ms: number) {
+  readyAt = performance.now() + ms;
+  const fill = $('recharge-fill');
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+  void fill.offsetWidth; // make the browser apply 0% before animating to 100%
+  fill.style.transition = `width ${ms}ms linear`;
+  fill.style.width = '100%';
+  $('throw').classList.add('cooling');
+  setTimeout(() => {
+    if (performance.now() >= readyAt) $('throw').classList.remove('cooling');
+  }, ms);
+}
+
 function sendThrow(power: number, source: 'button' | 'motion') {
   if (!joined || !socket.connected) return feedback('Not connected', 'err');
+  if (performance.now() < readyAt) return feedback('Recharging…');
   // Strictly increasing even across page reloads, so the server never drops it as a replay.
   seq = Math.max(seq + 1, Date.now());
   socket.emit(EV.ACTION, { seq, action: 'throw', aim: Number(aimSlider.value), power, source });

@@ -97,6 +97,16 @@ describe('throw cooldown', () => {
     const s = R.resolveThrow(R.start(R.newRound(), 2), 0, 'a').state;
     expect(R.resolveThrow(s, 0, 'b').outcome).not.toBe('ignored');
   });
+  it('tells the player how long their cooldown is, and how much is left', () => {
+    let s = R.start(R.newRound(), 1);
+    const first = R.resolveThrow(s, 0, 'a');
+    expect(first.cooldownMs).toBe(R.throwCooldownMs(1));
+    s = run(first.state, 500, 0);
+    const early = R.resolveThrow(s, 0, 'a');
+    expect(early.outcome).toBe('ignored');
+    expect(early.cooldownMs).toBeGreaterThan(0);
+    expect(early.cooldownMs).toBeLessThanOrEqual(R.throwCooldownMs(1) - 500);
+  });
   it('scales with players and caps out', () => {
     expect(R.throwCooldownMs(1)).toBe(R.BASE_COOLDOWN_MS);
     expect(R.throwCooldownMs(4)).toBe(2 * R.BASE_COOLDOWN_MS);

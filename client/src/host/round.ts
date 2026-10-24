@@ -122,12 +122,14 @@ export function resolveThrow(
   aim: number,
   playerId = 'anon',
   seq = 0,
-): { state: RoundState; outcome: ThrowOutcome } {
-  if (s.phase !== 'playing') return { state: s, outcome: 'ignored' };
+): { state: RoundState; outcome: ThrowOutcome; cooldownMs: number } {
+  // cooldownMs: after a throw, the full wait before the next one; if ignored, how long is left.
+  if (s.phase !== 'playing') return { state: s, outcome: 'ignored', cooldownMs: 0 };
   const now = ROUND_MS - s.timeLeftMs;
   const last = s.lastThrowAt[playerId];
-  if (last !== undefined && now - last < throwCooldownMs(s.players)) {
-    return { state: s, outcome: 'ignored' }; // still cooling down
+  const cooldown = throwCooldownMs(s.players);
+  if (last !== undefined && now - last < cooldown) {
+    return { state: s, outcome: 'ignored', cooldownMs: cooldown - (now - last) }; // still recharging
   }
   const ball: Snowball = { playerId, seq, x: clamp(aim), progress: 0 };
   return {
@@ -138,6 +140,7 @@ export function resolveThrow(
       snowballs: [...s.snowballs, ball],
     },
     outcome: 'thrown',
+    cooldownMs: cooldown,
   };
 }
 

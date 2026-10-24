@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ActionSchema,
+  HostEventSchema,
   JoinSchema,
   makeRoomCode,
   parseBoardLine,
@@ -65,4 +66,22 @@ describe('makeRoomCode', () => {
   it('makes 4-char codes without confusable characters', () => {
     for (let i = 0; i < 200; i++) expect(makeRoomCode()).toMatch(/^[A-HJ-NP-Z2-9]{4}$/);
   });
+});
+
+describe('HostEventSchema', () => {
+  const base = { playerId: 'abcdef12', actionSeq: 3 };
+  it('accepts recharge events with a cooldown', () => {
+    expect(HostEventSchema.safeParse({ ...base, type: 'thrown', cooldownMs: 2000 }).success).toBe(
+      true,
+    );
+    expect(HostEventSchema.safeParse({ ...base, type: 'cooldown', cooldownMs: 500 }).success).toBe(
+      true,
+    );
+  });
+  it('still accepts hit and miss without one', () =>
+    expect(HostEventSchema.safeParse({ ...base, type: 'hit' }).success).toBe(true));
+  it('rejects silly cooldowns', () =>
+    expect(HostEventSchema.safeParse({ ...base, type: 'thrown', cooldownMs: -1 }).success).toBe(
+      false,
+    ));
 });

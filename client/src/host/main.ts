@@ -146,8 +146,18 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   actionsThisSecond++;
   lastLatencyMs = Date.now() - a.serverTime;
   if (a.action !== 'throw') return;
-  // Launches a snowball (or ignores it during cooldown). The result comes later, in frame().
-  state = R.resolveThrow(state, a.aim, a.playerId, a.seq).state;
+  // Launches a snowball (or ignores it during cooldown). Hit/miss comes later, in frame().
+  const { state: next, outcome, cooldownMs } = R.resolveThrow(state, a.aim, a.playerId, a.seq);
+  state = next;
+  // Tell the phone so it can show its recharge bar. cooldownMs is 0 if the round isn't running.
+  if (outcome === 'thrown' || cooldownMs > 0) {
+    socket.emit(EV.HOST_EVENT, {
+      type: outcome === 'thrown' ? 'thrown' : 'cooldown',
+      playerId: a.playerId,
+      actionSeq: a.seq,
+      cooldownMs: Math.round(cooldownMs),
+    });
+  }
 });
 
 /** Called every frame for snowballs that just reached the rider: show it and tell the thrower. */
