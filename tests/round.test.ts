@@ -41,11 +41,32 @@ describe('round state machine', () => {
 describe('placeholder hit rule', () => {
   it('hits when aim is on the rider, misses otherwise, counts both', () => {
     let s = R.start(R.newRound());
-    const hit = R.resolveThrow(s, 0.05);
+    const hit = R.resolveThrow(s, 0.05, 'a');
     expect(hit.outcome).toBe('hit');
     s = hit.state;
-    const miss = R.resolveThrow(s, 0.9);
+    const miss = R.resolveThrow(s, 0.9, 'b');
     expect(miss.outcome).toBe('miss');
     expect(miss.state).toMatchObject({ hits: 1, throws: 2 });
+  });
+});
+
+describe('throw cooldown', () => {
+  it('ignores a second throw from the same player too soon', () => {
+    const s = R.resolveThrow(R.start(R.newRound(), 1), 0, 'a').state;
+    expect(R.resolveThrow(s, 0, 'a').outcome).toBe('ignored');
+  });
+  it('allows another throw once the cooldown is over', () => {
+    let s = R.resolveThrow(R.start(R.newRound(), 1), 0, 'a').state;
+    s = run(s, R.throwCooldownMs(1) + 20, 0);
+    expect(R.resolveThrow(s, 0, 'a').outcome).not.toBe('ignored');
+  });
+  it('gives each player their own cooldown', () => {
+    const s = R.resolveThrow(R.start(R.newRound(), 2), 0, 'a').state;
+    expect(R.resolveThrow(s, 0, 'b').outcome).not.toBe('ignored');
+  });
+  it('scales with players and caps out', () => {
+    expect(R.throwCooldownMs(1)).toBe(1000);
+    expect(R.throwCooldownMs(4)).toBe(2000);
+    expect(R.throwCooldownMs(100)).toBe(R.MAX_COOLDOWN_MS);
   });
 });
