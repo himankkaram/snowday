@@ -14,8 +14,8 @@ export const ROUND_MS = 60_000;
 export const RIDER_SPEED = 1.6; // world units per second at full steer (world x is -1..1)
 export const RIDER_HALF_WIDTH = 0.08;
 export const STEER_SMOOTHING_S = 0.08;
-export const BASE_COOLDOWN_MS = 1000;
-export const MAX_COOLDOWN_MS = 4000;
+export const BASE_COOLDOWN_MS = 2000;
+export const MAX_COOLDOWN_MS = 6000;
 
 /** Each thrower's cooldown grows with the square root of the number of throwers, capped. */
 export const throwCooldownMs = (players: number) =>
