@@ -1,16 +1,19 @@
 /*
- * Snow Day board controller — ESP32 + MPU-6050 (GY-521 module), USB serial.
+ * Snow Day board controller — ESP32 + ADXL345 or MPU-6050 accelerometer, USB serial.
+ * The sensor type is detected automatically at start-up.
  *
- * STATUS: written carefully but NOT compiled or run on hardware yet. Test it with the
+ * STATUS: compiles for ESP32 (core 3.3.12); not yet run on hardware. Test it with the
  * sequence in docs/HARDWARE.md before relying on it.
  *
  * Arduino IDE setup:
  *   Boards Manager: install "esp32 by Espressif Systems"; select "ESP32 Dev Module".
- *   No extra libraries needed: talks to the MPU-6050 directly over I2C with Wire.
+ *   No extra libraries needed: talks to the sensor directly over I2C with Wire.
  *
  * Wiring (classic ESP32 DevKit pin numbers; check your board's pinout):
- *   GY-521 VCC -> 3V3      GY-521 GND -> GND
- *   GY-521 SDA -> GPIO 21  GY-521 SCL -> GPIO 22
+ *   Sensor VCC -> 3V3      Sensor GND -> GND
+ *   Sensor SDA -> GPIO 21  Sensor SCL -> GPIO 22
+ *   ADXL345 only: CS -> 3V3 (selects I2C mode), SDO -> GND (address 0x53)
+ *   Grove buzzer instead of a motor: SIG -> GPIO 25, VCC -> 3V3, GND -> GND
  *   LED: GPIO 4 -> 220 ohm resistor -> LED long leg; LED short leg -> GND
  *   Vibration: GPIO 25 -> IN/SIG of a vibration MOTOR MODULE (has its own transistor),
  *              module VCC -> 3V3 (or 5V if the module says so), module GND -> GND.
@@ -34,7 +37,6 @@ const int PIN_LED = 4;
 const int PIN_MOTOR = 25;
 
 // ---------- tuning ----------
-const uint8_t MPU_ADDR = 0x68;     // 0x69 if the module's AD0 pin is tied high
 const bool USE_ROLL = true;        // true: steer from rotation about the X axis; false: Y axis
 const bool INVERT = false;         // flip if leaning left steers right
 const float MAX_TILT_DEG = 12.0;   // tilt that gives full lock; a low board only rocks ~10-15 deg
@@ -54,37 +56,94 @@ unsigned long hitUntil = 0, buzzStartedAt = 0;
 String ledEffect = "off";
 String inbox;
 
-// ---------- MPU-6050 ----------
-bool mpuWrite(uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(MPU_ADDR);
+// ---------- accelerometer (auto-detects ADXL345 or MPU-6050) ----------
+enum SensorType { SENSOR_NONE, SENSOR_ADXL345, SENSOR_MPU6050 };
+SensorType sensorType = SENSOR_NONE;
+uint8_t sensorAddr = 0;
+
+bool i2cPresent(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+bool regWrite(uint8_t addr, uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(addr);
   Wire.write(reg);
   Wire.write(val);
   return Wire.endTransmission() == 0;
 }
 
-bool mpuInit() {
-  if (!mpuWrite(0x6B, 0x00)) return false;  // PWR_MGMT_1: wake up
-  mpuWrite(0x1C, 0x00);                      // ACCEL_CONFIG: +-2 g
-  mpuWrite(0x1A, 0x03);                      // CONFIG: on-chip low-pass ~44 Hz
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x75);                          // WHO_AM_I
-  Wire.endTransmission(false);
-  Wire.requestFrom((int)MPU_ADDR, 1);
-  int who = Wire.available() ? Wire.read() : -1;
-  Serial.printf("I,sensor WHO_AM_I=0x%02X (0x68 genuine; clones differ, usually fine)\n", who);
+int regRead(uint8_t addr, uint8_t reg) {
+  Wire.beginTransmission(addr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return -1;
+  if (Wire.requestFrom((int)addr, 1) != 1) return -1;
+  return Wire.read();
+}
+
+bool sensorInit() {
+  sensorType = SENSOR_NONE;
+  // ADXL345: 0x53 when SDO is low (usual), 0x1D when SDO is high. DEVID register 0x00 reads 0xE5.
+  const uint8_t adxlAddrs[] = {0x53, 0x1D};
+  for (uint8_t a : adxlAddrs) {
+    if (i2cPresent(a) && regRead(a, 0x00) == 0xE5) {
+      regWrite(a, 0x31, 0x08);  // DATA_FORMAT: full resolution, +-2 g
+      regWrite(a, 0x2C, 0x0A);  // BW_RATE: 100 Hz
+      regWrite(a, 0x2D, 0x08);  // POWER_CTL: start measuring
+      sensorType = SENSOR_ADXL345;
+      sensorAddr = a;
+      Serial.printf("I,sensor ADXL345 found at 0x%02X\n", a);
+      return true;
+    }
+  }
+  // MPU-6050: 0x68, or 0x69 if AD0 is tied high.
+  const uint8_t mpuAddrs[] = {0x68, 0x69};
+  for (uint8_t a : mpuAddrs) {
+    if (i2cPresent(a) && regWrite(a, 0x6B, 0x00)) {  // PWR_MGMT_1: wake up
+      regWrite(a, 0x1C, 0x00);                        // ACCEL_CONFIG: +-2 g
+      regWrite(a, 0x1A, 0x03);                        // CONFIG: on-chip low-pass ~44 Hz
+      sensorType = SENSOR_MPU6050;
+      sensorAddr = a;
+      Serial.printf("I,sensor MPU-6050 found at 0x%02X (WHO_AM_I=0x%02X)\n", a, regRead(a, 0x75));
+      return true;
+    }
+  }
+  return false;
+}
+
+// Reads acceleration in g. Returns false on I2C failure.
+bool readAccel(float &ax, float &ay, float &az) {
+  if (sensorType == SENSOR_NONE) return false;
+  uint8_t startReg = sensorType == SENSOR_ADXL345 ? 0x32 : 0x3B;
+  Wire.beginTransmission(sensorAddr);
+  Wire.write(startReg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)sensorAddr, 6) != 6) return false;
+  uint8_t b[6];
+  for (int i = 0; i < 6; i++) b[i] = Wire.read();
+  int16_t rx, ry, rz;
+  float lsbPerG;
+  if (sensorType == SENSOR_ADXL345) {  // little-endian, 256 LSB/g in full resolution
+    rx = (int16_t)(b[1] << 8 | b[0]);
+    ry = (int16_t)(b[3] << 8 | b[2]);
+    rz = (int16_t)(b[5] << 8 | b[4]);
+    lsbPerG = 256.0;
+  } else {  // MPU-6050: big-endian, 16384 LSB/g at +-2 g
+    rx = (int16_t)(b[0] << 8 | b[1]);
+    ry = (int16_t)(b[2] << 8 | b[3]);
+    rz = (int16_t)(b[4] << 8 | b[5]);
+    lsbPerG = 16384.0;
+  }
+  ax = rx / lsbPerG;
+  ay = ry / lsbPerG;
+  az = rz / lsbPerG;
   return true;
 }
 
 // Returns tilt in degrees, or NAN on I2C failure.
 float readTiltDeg() {
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x3B);  // ACCEL_XOUT_H
-  if (Wire.endTransmission(false) != 0) return NAN;
-  if (Wire.requestFrom((int)MPU_ADDR, 6) != 6) return NAN;
-  int16_t rx = (Wire.read() << 8) | Wire.read();
-  int16_t ry = (Wire.read() << 8) | Wire.read();
-  int16_t rz = (Wire.read() << 8) | Wire.read();
-  float ax = rx / 16384.0, ay = ry / 16384.0, az = rz / 16384.0;  // in g at +-2 g range
+  float ax, ay, az;
+  if (!readAccel(ax, ay, az)) return NAN;
   // Gravity-only tilt: fine for a slowly rocking board, no gyro drift to fight.
   float deg = USE_ROLL ? atan2(ay, az) * 180.0 / PI
                        : atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / PI;
@@ -146,9 +205,9 @@ void setup() {
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);
   delay(200);
-  sensorOk = mpuInit();
+  sensorOk = sensorInit();
   if (sensorOk) calibrate();
-  else Serial.println("I,sensor not found: check SDA/SCL/3V3/GND wiring");
+  else Serial.println("I,no ADXL345/MPU-6050 found: check SDA/SCL/3V3/GND (ADXL345: CS to 3V3)");
 }
 
 void loop() {
@@ -163,9 +222,9 @@ void loop() {
 
   if (!sensorOk && now - lastSensorRetry > 1000) {
     lastSensorRetry = now;
-    sensorOk = mpuInit();
+    sensorOk = sensorInit();
     if (sensorOk) calibrate();
-    else Serial.println("I,sensor not found: check SDA/SCL/3V3/GND wiring");
+    else Serial.println("I,no ADXL345/MPU-6050 found: check SDA/SCL/3V3/GND (ADXL345: CS to 3V3)");
   }
 
   if (sensorOk && now - lastSample >= SAMPLE_MS) {
