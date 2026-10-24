@@ -8,45 +8,69 @@
   </head>
   <body>
     <div class="host">
-      <canvas id="game" aria-label="Game screen"></canvas>
+      <div class="stage">
+        <div class="marquee" aria-hidden="true">
+          <span
+            >❄ WeLcOmE 2 SNOW DAY ❄ scan the QR code 2 join the snowball fight!! ★ flick ur phone 2
+            throw ★ lean on the board 2 dodge ★ best viewed at 1024x768 ★ Y2K compliant ❄</span
+          >
+        </div>
+        <canvas id="game" aria-label="Game screen"></canvas>
+        <footer class="taskbar">
+          <button id="start" class="xp-start" title="Start round (Space)">
+            <span class="flag">❄</span>start
+          </button>
+          <button id="reset" class="task-btn" title="Reset round (R)">Reset (R)</button>
+          <span class="task-hint"
+            >Space = start · R = reset · C = recalibrate · D = debug · ← → steer</span
+          >
+          <div class="tray"><span id="net" class="pill warn">connecting</span></div>
+        </footer>
+      </div>
+
       <aside class="side">
-        <div class="row">
-          <strong>Room <span id="room">----</span></strong>
-          <span id="net" class="pill warn">connecting</span>
-        </div>
-        <img id="qr" class="qr" alt="QR code to join this room" />
-        <p
-          id="join-url"
-          class="muted"
-          style="font-size: 0.8rem; word-break: break-all; margin: 0"
-        ></p>
-        <div class="stack">
-          <h2>Steering</h2>
-          <select id="controller" aria-label="Steering device">
-            <option value="keyboard">Keyboard only</option>
-            <option value="mock">Mock board</option>
-            <option value="serial">USB board</option>
-          </select>
-          <div class="row">
-            <button id="connect-board">Connect board</button>
-            <button id="recalibrate">Recalibrate</button>
+        <section class="win">
+          <div class="win-title">
+            <h2>❄ Join the fun!</h2>
+            <span class="win-btns" aria-hidden="true"><i>_</i><i>□</i><i class="x">×</i></span>
           </div>
-          <span id="ctrl-status" class="muted"></span>
-        </div>
-        <div class="stack">
-          <h2>Round</h2>
-          <div class="row">
-            <button id="start" class="primary">Start (Space)</button>
-            <button id="reset">Reset (R)</button>
+          <div class="win-body">
+            <div class="room-line">
+              Room <strong id="room">----</strong> <span class="new">NEW!</span>
+            </div>
+            <img id="qr" class="qr" alt="QR code to join this room" />
+            <p id="join-url" class="url"></p>
           </div>
-        </div>
-        <div class="stack">
-          <h2>Players <span id="count" class="muted">0</span></h2>
-          <ul id="players"></ul>
-        </div>
-        <p class="muted" style="font-size: 0.8rem; margin-top: auto">
-          D toggles debug overlay. Keyboard steering always works.
-        </p>
+        </section>
+
+        <section class="win">
+          <div class="win-title">
+            <h2>🛹 Steering.exe</h2>
+            <span class="win-btns" aria-hidden="true"><i>_</i><i>□</i><i class="x">×</i></span>
+          </div>
+          <div class="win-body">
+            <select id="controller" aria-label="Steering device">
+              <option value="keyboard">Keyboard only</option>
+              <option value="mock">Mock board</option>
+              <option value="serial">USB board</option>
+            </select>
+            <div class="row">
+              <button id="connect-board" class="primary">Connect board</button>
+              <button id="recalibrate">Recalibrate</button>
+            </div>
+            <span id="ctrl-status" class="muted status-line"></span>
+          </div>
+        </section>
+
+        <section class="win">
+          <div class="win-title">
+            <h2>👥 Players online (<span id="count">0</span>)</h2>
+            <span class="win-btns" aria-hidden="true"><i>_</i><i>□</i><i class="x">×</i></span>
+          </div>
+          <div class="win-body">
+            <ul id="players"></ul>
+          </div>
+        </section>
       </aside>
     </div>
     <div id="debug" class="debug" hidden></div>

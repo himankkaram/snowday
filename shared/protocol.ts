@@ -96,6 +96,10 @@ export const HostStateSchema = z.object({
     .max(10 * 60_000),
   riderId: z.string().max(64).nullable(),
   score: z.object({ hits: z.number().int().min(0), throws: z.number().int().min(0) }),
+  /** Rider health, 0..100. Optional so older hosts still validate. */
+  health: z.number().int().min(0).max(100).optional(),
+  /** Set when the round ends: did the rider survive? */
+  result: z.enum(['win', 'lose']).nullable().optional(),
 });
 export type HostState = z.infer<typeof HostStateSchema>;
 

@@ -11,6 +11,8 @@ import { MockController } from '../input/mock';
 import { WebSerialController } from '../input/webserial';
 import { clamp } from '../input/steering';
 import * as R from './round';
+import * as T from './theme';
+import * as S from './scene';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -146,8 +148,17 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   actionsThisSecond++;
   lastLatencyMs = Date.now() - a.serverTime;
   if (a.action !== 'throw') return;
-  // Launches a snowball (or ignores it during cooldown). Hit/miss comes later, in frame().
-  const { state: next, outcome, cooldownMs } = R.resolveThrow(state, a.aim, a.playerId, a.seq);
+  // Launch a snowball. Hit or miss is decided when it lands (see handleLandings).
+  const {
+    state: next,
+    outcome,
+    cooldownMs,
+  } = R.throwSnowball(state, {
+    aim: a.aim,
+    power: a.power,
+    playerId: a.playerId,
+    seq: a.seq,
+  });
   state = next;
   // Tell the phone so it can show its recharge bar. cooldownMs is 0 if the round isn't running.
   if (outcome === 'thrown' || cooldownMs > 0) {
@@ -160,15 +171,10 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   }
 });
 
-/** Called every frame for snowballs that just reached the rider: show it and tell the thrower. */
-function reportLandings() {
+/** Turn snowballs that landed this frame into splats, phone feedback and board buzzes. */
+function handleLandings(now: number) {
   for (const l of state.landed) {
-    markers.push({
-      x: l.x,
-      hit: l.hit,
-      name: names.get(l.playerId) ?? '?',
-      born: performance.now(),
-    });
+    markers.push({ x: l.aim, hit: l.hit, name: names.get(l.playerId) ?? '?', born: now });
     if (markers.length > 40) markers.shift();
     socket.emit(EV.HOST_EVENT, {
       type: l.hit ? 'hit' : 'miss',
@@ -177,12 +183,23 @@ function reportLandings() {
     });
     if (l.hit) {
       active.sendHitFeedback();
-      flashUntil = performance.now() + 150;
+      flashUntil = now + 350;
     }
   }
 }
 
+let lastPhase = state.phase;
+function onPhaseChange() {
+  if (state.phase === lastPhase) return;
+  lastPhase = state.phase;
+  if (state.phase === 'over') {
+    active.setLedEffect(state.result === 'lose' ? 'hit' : 'idle');
+    socket.emit(EV.HOST_STATE, R.toHostState(state)); // tell phones the result straight away
+  }
+}
+
 function startRound() {
+  // Count the connected phones (not the rider) so the cooldown can scale with the crowd.
   const throwers = roster.players.filter((p) => p.connected && p.id !== state.riderId).length;
   state = R.start(state, throwers);
   active.setLedEffect('idle');
@@ -232,7 +249,8 @@ function frame(now: number) {
   last = now;
   fps = fps * 0.9 + (1000 / Math.max(dt, 1)) * 0.1;
   state = R.step(state, dt, currentSteer());
-  reportLandings();
+  handleLandings(now);
+  onPhaseChange();
   draw(now);
   drawDebug();
   requestAnimationFrame(frame);
@@ -241,59 +259,15 @@ function frame(now: number) {
 function draw(now: number) {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const toPx = (x: number) => ((x + 1) / 2) * w;
-  ctx.fillStyle = now < flashUntil ? '#ffd6d6' : '#dfeaf4';
-  ctx.fillRect(0, 0, w, h);
-
-  // snowballs in the air: fall from the top of the screen to the rider's line
-  const riderY = h * 0.72;
-  const ballR = Math.max(6, (R.SNOWBALL_RADIUS * w) / 2);
-  for (const b of state.snowballs) {
-    const y = b.progress * riderY;
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#12263a';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(toPx(b.x), y, ballR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  // landed snowballs: a fading splat with the thrower's name (green = hit, grey = miss)
-  for (const m of markers) {
-    const age = (now - m.born) / 1000;
-    if (age > 1) continue;
-    ctx.globalAlpha = 1 - age;
-    ctx.fillStyle = m.hit ? '#1e8a4c' : '#7f8c99';
-    ctx.beginPath();
-    ctx.arc(toPx(m.x), riderY, ballR * (1 + age), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = '13px system-ui';
-    ctx.fillText(m.name, toPx(m.x) + ballR + 8, riderY - 10);
-  }
-  ctx.globalAlpha = 1;
-
-  // rider (placeholder box)
-  const rw = (R.RIDER_HALF_WIDTH * w) / 2; // world x spans -1..1 = 2 units across w pixels
-  ctx.fillStyle = '#1f6fd1';
-  ctx.fillRect(toPx(state.riderX) - rw, h * 0.72, rw * 2, 36);
-
-  // HUD
-  ctx.fillStyle = '#12263a';
-  ctx.font = 'bold 48px system-ui';
-  ctx.textAlign = 'center';
-  ctx.fillText(String(Math.ceil(state.timeLeftMs / 1000)), w / 2, 64);
-  ctx.font = '22px system-ui';
-  ctx.fillText(`Hits ${state.hits} / Throws ${state.throws}`, w / 2, 100);
-  if (state.phase !== 'playing') {
-    ctx.font = 'bold 36px system-ui';
-    ctx.fillText(
-      state.phase === 'lobby' ? 'Press Space to start' : `Round over: ${state.hits} hits`,
-      w / 2,
-      h / 2,
-    );
-  }
-  ctx.textAlign = 'start';
+  // 3D downhill scene: slope, trees, rider, snowballs, splats (scene.ts)
+  S.drawScene(ctx, w, h, {
+    state,
+    now,
+    hurt: now < flashUntil,
+    markers,
+    nameOf: (id) => names.get(id) ?? '',
+  });
+  T.drawHud(ctx, w, h, state, now); // timer, score, health bar, lobby / win / lose (theme.ts)
 }
 
 function drawDebug() {
@@ -306,6 +280,7 @@ function drawDebug() {
     `controller ${active.name}: ${active.status} (${active.detail})`,
     `serial lines/s ${serial.linesPerSecond}  board info: ${serial.lastInfo || '-'}`,
     `steer raw ${currentSteer().toFixed(2)}  applied ${state.steer.toFixed(2)}  x ${state.riderX.toFixed(2)}`,
+    `health ${state.health}  in flight ${state.snowballs.length}  result ${state.result ?? '-'}`,
     `actions/s ${actionsPerSecond}  last relay latency ${lastLatencyMs} ms`,
     `last error ${lastError || '-'}`,
   ].join('\n');
