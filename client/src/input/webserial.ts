@@ -54,6 +54,7 @@ export class WebSerialController implements SteeringController {
       this.detail = 'Web Serial needs desktop Chrome or Edge';
       return;
     }
+    if (this.port && this.status === 'connected') return; // already open: a second open() would fail
     this.status = 'connecting';
     try {
       const known = await navigator.serial.getPorts();
@@ -66,6 +67,7 @@ export class WebSerialController implements SteeringController {
   }
 
   private async open(port: SerialPort) {
+    if (this.port === port) return; // auto-reconnect and a "Connect board" click can race; open once
     try {
       await port.open({ baudRate: SERIAL_BAUD });
     } catch (err) {
@@ -118,6 +120,7 @@ export class WebSerialController implements SteeringController {
     const parsed = parseBoardLine(line);
     if (!parsed) return;
     if (parsed.kind === 'steer') {
+      this.status = 'connected'; // data is flowing, so any earlier open error is stale
       this.steer = parsed.value;
       this.lastLineAt = performance.now();
       this.lineCount++;

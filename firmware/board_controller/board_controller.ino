@@ -37,7 +37,7 @@ const int PIN_LED = 4;
 const int PIN_MOTOR = 25;
 
 // ---------- tuning ----------
-const bool USE_ROLL = true;        // true: steer from rotation about the X axis; false: Y axis
+const bool USE_ROLL = false;        // true: steer from rotation about the X axis; false: Y axis
 const bool INVERT = false;         // flip if leaning left steers right
 const float MAX_TILT_DEG = 12.0;   // tilt that gives full lock; a low board only rocks ~10-15 deg
 const float DEADZONE = 0.08;       // ignore wobble within 8% of full lock
