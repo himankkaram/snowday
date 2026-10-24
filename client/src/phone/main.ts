@@ -66,16 +66,21 @@ socket.on('disconnect', () => setNet('offline', 'bad'));
 socket.on(EV.ERROR, (e) => feedback(e.code === 'RATE_LIMITED' ? 'Slow down!' : e.message, 'err'));
 socket.on(EV.GAME_EVENT, (e) => {
   if (e.type === 'hit') {
-    feedback('Hit!', 'hit');
+    feedback('HIT! -10', 'hit');
     navigator.vibrate?.(80); // Android only; iOS ignores it
   } else feedback('Missed', 'miss');
 });
 socket.on(EV.STATE, (s: HostState) => {
+  const health = s.health ?? 100;
   $('phase').textContent =
     s.phase === 'playing'
-      ? `Round on: ${Math.ceil(s.timeLeftMs / 1000)} s left · ${s.score.hits} hits`
+      ? `Round on: ${Math.ceil(s.timeLeftMs / 1000)} s left · Rider health ${health}/100`
       : s.phase === 'over'
-        ? `Round over: ${s.score.hits} hits`
+        ? s.result === 'lose'
+          ? `WIPEOUT! The rider is down. Snowballers win! (${s.score.hits} hits)`
+          : s.result === 'win'
+            ? `The rider survived with ${health} health. Rider wins!`
+            : `Round over: ${s.score.hits} hits`
         : 'Waiting for the round to start';
 });
 

@@ -11,6 +11,8 @@ import { MockController } from '../input/mock';
 import { WebSerialController } from '../input/webserial';
 import { clamp } from '../input/steering';
 import * as R from './round';
+import * as T from './theme';
+import * as S from './scene';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -146,22 +148,41 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   actionsThisSecond++;
   lastLatencyMs = Date.now() - a.serverTime;
   if (a.action !== 'throw') return;
-  const { state: next, outcome } = R.resolveThrow(state, a.aim);
-  state = next;
-  if (outcome === 'ignored') return;
-  markers.push({
-    x: a.aim,
-    hit: outcome === 'hit',
-    name: names.get(a.playerId) ?? '?',
-    born: performance.now(),
-  });
-  if (markers.length > 40) markers.shift();
-  socket.emit(EV.HOST_EVENT, { type: outcome, playerId: a.playerId, actionSeq: a.seq });
-  if (outcome === 'hit') {
-    active.sendHitFeedback();
-    flashUntil = performance.now() + 150;
-  }
+  // Launch a snowball. Hit or miss is decided when it lands (see handleLandings).
+  state = R.throwSnowball(state, {
+    aim: a.aim,
+    power: a.power,
+    playerId: a.playerId,
+    seq: a.seq,
+  }).state;
 });
+
+/** Turn snowballs that landed this frame into splats, phone feedback and board buzzes. */
+function handleLandings(now: number) {
+  for (const l of state.landed) {
+    markers.push({ x: l.aim, hit: l.hit, name: names.get(l.playerId) ?? '?', born: now });
+    if (markers.length > 40) markers.shift();
+    socket.emit(EV.HOST_EVENT, {
+      type: l.hit ? 'hit' : 'miss',
+      playerId: l.playerId,
+      actionSeq: l.seq,
+    });
+    if (l.hit) {
+      active.sendHitFeedback();
+      flashUntil = now + 350;
+    }
+  }
+}
+
+let lastPhase = state.phase;
+function onPhaseChange() {
+  if (state.phase === lastPhase) return;
+  lastPhase = state.phase;
+  if (state.phase === 'over') {
+    active.setLedEffect(state.result === 'lose' ? 'hit' : 'idle');
+    socket.emit(EV.HOST_STATE, R.toHostState(state)); // tell phones the result straight away
+  }
+}
 
 function startRound() {
   state = R.start(state);
@@ -212,6 +233,8 @@ function frame(now: number) {
   last = now;
   fps = fps * 0.9 + (1000 / Math.max(dt, 1)) * 0.1;
   state = R.step(state, dt, currentSteer());
+  handleLandings(now);
+  onPhaseChange();
   draw(now);
   drawDebug();
   requestAnimationFrame(frame);
@@ -220,45 +243,15 @@ function frame(now: number) {
 function draw(now: number) {
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
-  const toPx = (x: number) => ((x + 1) / 2) * w;
-  ctx.fillStyle = now < flashUntil ? '#ffd6d6' : '#dfeaf4';
-  ctx.fillRect(0, 0, w, h);
-
-  // throw markers fade over 1.5 s
-  for (const m of markers) {
-    const age = (now - m.born) / 1500;
-    if (age > 1) continue;
-    ctx.globalAlpha = 1 - age;
-    ctx.fillStyle = m.hit ? '#1e8a4c' : '#7f8c99';
-    ctx.beginPath();
-    ctx.arc(toPx(m.x), h * 0.35 + age * h * 0.35, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = '13px system-ui';
-    ctx.fillText(m.name, toPx(m.x) + 14, h * 0.35 + age * h * 0.35 + 4);
-  }
-  ctx.globalAlpha = 1;
-
-  // rider (placeholder box)
-  const rw = (R.RIDER_HALF_WIDTH * w) / 2; // world x spans -1..1 = 2 units across w pixels
-  ctx.fillStyle = '#1f6fd1';
-  ctx.fillRect(toPx(state.riderX) - rw, h * 0.72, rw * 2, 36);
-
-  // HUD
-  ctx.fillStyle = '#12263a';
-  ctx.font = 'bold 48px system-ui';
-  ctx.textAlign = 'center';
-  ctx.fillText(String(Math.ceil(state.timeLeftMs / 1000)), w / 2, 64);
-  ctx.font = '22px system-ui';
-  ctx.fillText(`Hits ${state.hits} / Throws ${state.throws}`, w / 2, 100);
-  if (state.phase !== 'playing') {
-    ctx.font = 'bold 36px system-ui';
-    ctx.fillText(
-      state.phase === 'lobby' ? 'Press Space to start' : `Round over: ${state.hits} hits`,
-      w / 2,
-      h / 2,
-    );
-  }
-  ctx.textAlign = 'start';
+  // 3D downhill scene: slope, trees, rider, snowballs, splats (scene.ts)
+  S.drawScene(ctx, w, h, {
+    state,
+    now,
+    hurt: now < flashUntil,
+    markers,
+    nameOf: (id) => names.get(id) ?? '',
+  });
+  T.drawHud(ctx, w, h, state, now); // timer, score, health bar, lobby / win / lose (theme.ts)
 }
 
 function drawDebug() {
@@ -271,6 +264,7 @@ function drawDebug() {
     `controller ${active.name}: ${active.status} (${active.detail})`,
     `serial lines/s ${serial.linesPerSecond}  board info: ${serial.lastInfo || '-'}`,
     `steer raw ${currentSteer().toFixed(2)}  applied ${state.steer.toFixed(2)}  x ${state.riderX.toFixed(2)}`,
+    `health ${state.health}  in flight ${state.snowballs.length}  result ${state.result ?? '-'}`,
     `actions/s ${actionsPerSecond}  last relay latency ${lastLatencyMs} ms`,
     `last error ${lastError || '-'}`,
   ].join('\n');

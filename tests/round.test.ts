@@ -24,7 +24,7 @@ describe('round state machine', () => {
     let s = run(R.start(R.newRound()), R.ROUND_MS + 500, 0);
     expect(s.phase).toBe('over');
     expect(s.timeLeftMs).toBe(0);
-    expect(R.resolveThrow(s, 0).outcome).toBe('ignored');
+    expect(R.throwSnowball(s, { aim: 0, power: 1, playerId: 'p', seq: 1 }).outcome).toBe('ignored');
   });
   it('clamps huge frame gaps (hidden tab) instead of teleporting', () => {
     const s = R.step(R.start(R.newRound()), 10_000, 1);
@@ -32,20 +32,85 @@ describe('round state machine', () => {
   });
   it('reset returns to lobby with zero score', () => {
     let s = R.start(R.newRound());
-    s = R.resolveThrow(s, 0).state;
+    s = R.throwSnowball(s, { aim: 0, power: 1, playerId: 'p', seq: 1 }).state;
+    s = run(s, 1200, 0);
     s = R.reset(s);
-    expect(s).toMatchObject({ phase: 'lobby', hits: 0, throws: 0, timeLeftMs: R.ROUND_MS });
+    expect(s).toMatchObject({
+      phase: 'lobby',
+      hits: 0,
+      throws: 0,
+      timeLeftMs: R.ROUND_MS,
+      health: R.MAX_HEALTH,
+      snowballs: [],
+      result: null,
+    });
   });
 });
 
-describe('placeholder hit rule', () => {
-  it('hits when aim is on the rider, misses otherwise, counts both', () => {
+let seq = 0;
+const toss = (s: R.RoundState, aim: number, power = 1) =>
+  R.throwSnowball(s, { aim, power, playerId: 'p1', seq: ++seq }).state;
+/** Step frame by frame and collect every landing. */
+const runCollect = (s: R.RoundState, ms: number, steer: number) => {
+  const landed: R.Landing[] = [];
+  for (let t = 0; t < ms; t += 16) {
+    s = R.step(s, 16, steer);
+    landed.push(...s.landed);
+  }
+  return { s, landed };
+};
+
+describe('snowballs', () => {
+  it('a throw flies first: nothing is decided at the moment of throwing', () => {
     let s = R.start(R.newRound());
-    const hit = R.resolveThrow(s, 0.05);
-    expect(hit.outcome).toBe('hit');
-    s = hit.state;
-    const miss = R.resolveThrow(s, 0.9);
-    expect(miss.outcome).toBe('miss');
-    expect(miss.state).toMatchObject({ hits: 1, throws: 2 });
+    const r = R.throwSnowball(s, { aim: 0, power: 1, playerId: 'p1', seq: 1 });
+    expect(r.outcome).toBe('thrown');
+    s = r.state;
+    expect(s).toMatchObject({ throws: 1, hits: 0, health: 100 });
+    expect(s.snowballs).toHaveLength(1);
+  });
+  it('harder throws fly faster', () => {
+    expect(R.flightMsFor(1)).toBe(R.FLIGHT_MS_FAST);
+    expect(R.flightMsFor(0)).toBe(R.FLIGHT_MS_SLOW);
+    expect(R.flightMsFor(1)).toBeLessThan(R.flightMsFor(0.3));
+  });
+  it('hits a rider who stays put, after the flight time, and takes 10 health', () => {
+    const s0 = toss(R.start(R.newRound()), 0.02);
+    const early = runCollect(s0, R.FLIGHT_MS_FAST - 50, 0);
+    expect(early.landed).toHaveLength(0);
+    const { s, landed } = runCollect(s0, R.FLIGHT_MS_FAST + 50, 0);
+    expect(landed).toEqual([{ playerId: 'p1', seq: expect.any(Number), aim: 0.02, hit: true }]);
+    expect(s).toMatchObject({ hits: 1, health: 90 });
+    expect(s.snowballs).toHaveLength(0);
+  });
+  it('the rider can dodge by leaning while it flies', () => {
+    const s0 = toss(R.start(R.newRound()), 0, 0); // slow throw at the rider's start position
+    const { s, landed } = runCollect(s0, R.FLIGHT_MS_SLOW + 50, 1); // lean right the whole time
+    expect(landed[0]?.hit).toBe(false);
+    expect(s).toMatchObject({ hits: 0, health: 100 });
+  });
+  it('a ball touching the rider edge still hits', () => {
+    expect(R.isHit(R.RIDER_HALF_WIDTH + R.SNOWBALL_RADIUS - 0.001, 0)).toBe(true);
+    expect(R.isHit(R.RIDER_HALF_WIDTH + R.SNOWBALL_RADIUS + 0.01, 0)).toBe(false);
+  });
+  it('10 hits = 0 health = rider loses and the round ends', () => {
+    let s = R.start(R.newRound());
+    for (let i = 0; i < 10; i++) s = toss(s, 0);
+    s = toss(s, 0); // an 11th ball in the air when the rider goes down
+    const r = runCollect(s, R.FLIGHT_MS_FAST + 50, 0);
+    expect(r.s).toMatchObject({ phase: 'over', result: 'lose', health: 0, hits: 10 });
+    expect(r.s.snowballs).toHaveLength(0);
+    expect(R.toHostState(r.s)).toMatchObject({ phase: 'over', result: 'lose', health: 0 });
+  });
+  it('surviving the full minute with health left = rider wins', () => {
+    let s = toss(R.start(R.newRound()), 0);
+    s = run(s, R.ROUND_MS + 100, 0);
+    expect(s).toMatchObject({ phase: 'over', result: 'win', health: 90 });
+  });
+  it('misses never cost health', () => {
+    let s = R.start(R.newRound());
+    for (let i = 0; i < 5; i++) s = toss(s, 0.9);
+    s = run(s, 1200, 0);
+    expect(s).toMatchObject({ health: 100, hits: 0, throws: 5 });
   });
 });
