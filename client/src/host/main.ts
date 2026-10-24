@@ -146,7 +146,7 @@ socket.on(EV.ACTION_RELAY, (a: ActionRelay) => {
   actionsThisSecond++;
   lastLatencyMs = Date.now() - a.serverTime;
   if (a.action !== 'throw') return;
-  R.resolveThrow(state, a.aim, a.playerId);
+  const { state: next, outcome } = R.resolveThrow(state, a.aim, a.playerId);
   state = next;
   if (outcome === 'ignored') return;
   markers.push({
