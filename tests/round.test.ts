@@ -65,8 +65,8 @@ describe('throw cooldown', () => {
     expect(R.resolveThrow(s, 0, 'b').outcome).not.toBe('ignored');
   });
   it('scales with players and caps out', () => {
-    expect(R.throwCooldownMs(1)).toBe(1000);
-    expect(R.throwCooldownMs(4)).toBe(2000);
+    expect(R.throwCooldownMs(1)).toBe(R.BASE_COOLDOWN_MS)
+    expect(R.throwCooldownMs(4)).toBe(2 * R.BASE_COOLDOWN_MS)
     expect(R.throwCooldownMs(100)).toBe(R.MAX_COOLDOWN_MS);
   });
 });
