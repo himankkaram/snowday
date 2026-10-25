@@ -79,9 +79,43 @@ export function motionMagnitude(e: DeviceMotionEvent): number | null {
 }
 
 /**
- * Aim from left/right tilt of the phone held upright in portrait (DeviceOrientationEvent.gamma,
+ * Aim from left/right tilt of the phone in portrait (DeviceOrientationEvent.gamma,
  * -90..90 degrees). `neutral` is captured when the player taps "Calibrate".
+ * Hold the phone tilted back a bit, like reading it: if it's held dead upright, gamma gets
+ * jumpy and can flip sign, which makes the aim swing about.
  */
 export function aimFromGamma(gamma: number, neutral: number, maxDeg = 35): number {
   return Math.max(-1, Math.min(1, (gamma - neutral) / maxDeg));
+}
+
+/** How far back to look for the aim when a flick is detected. */
+export const AIM_LOOKBACK_MS = 250;
+/** Smoothing for the aim. Lower = steadier but slower to follow the phone. */
+export const AIM_SMOOTHING = 0.3;
+
+/**
+ * Remembers recent aim values. By the time a flick is detected, the phone has already been
+ * swung and tilted by the throw itself, so the aim *at that moment* is junk. Using the aim
+ * from just before the flick started gives the direction the player was actually pointing.
+ */
+export class AimHistory {
+  private samples: { t: number; aim: number }[] = [];
+
+  constructor(private keepMs = 1000) {}
+
+  push(aim: number, tMs: number) {
+    this.samples.push({ t: tMs, aim });
+    while (this.samples.length > 1 && tMs - this.samples[0]!.t > this.keepMs) this.samples.shift();
+  }
+
+  /** The aim as it was `ms` before `tMs`, or the oldest one we have, or 0 if none yet. */
+  before(tMs: number, ms = AIM_LOOKBACK_MS): number {
+    const target = tMs - ms;
+    let best: number | null = null;
+    for (const s of this.samples) {
+      if (s.t <= target) best = s.aim;
+      else break;
+    }
+    return best ?? this.samples[0]?.aim ?? 0;
+  }
 }

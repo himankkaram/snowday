@@ -1,7 +1,14 @@
 /** Phone controller page: join, throw (button always; motion optional), show feedback. */
 import { EV, type HostState } from '../../../shared/protocol';
 import { connect, getClientId, join, onEveryConnect } from '../net/socket';
-import { aimFromGamma, enableMotion, motionMagnitude, ThrowDetector } from './motion';
+import {
+  AIM_SMOOTHING,
+  AimHistory,
+  aimFromGamma,
+  enableMotion,
+  motionMagnitude,
+  ThrowDetector,
+} from './motion';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const params = new URLSearchParams(location.search);
@@ -108,12 +115,12 @@ function startRecharge(ms: number) {
   }, ms);
 }
 
-function sendThrow(power: number, source: 'button' | 'motion') {
+function sendThrow(power: number, source: 'button' | 'motion', aim = Number(aimSlider.value)) {
   if (!joined || !socket.connected) return feedback('Not connected', 'err');
   if (performance.now() < readyAt) return feedback('Recharging…');
   // Strictly increasing even across page reloads, so the server never drops it as a replay.
   seq = Math.max(seq + 1, Date.now());
-  socket.emit(EV.ACTION, { seq, action: 'throw', aim: Number(aimSlider.value), power, source });
+  socket.emit(EV.ACTION, { seq, action: 'throw', aim, power, source });
   feedback('Thrown…');
 }
 $('throw').addEventListener('click', () => sendThrow(0.7, 'button'));
@@ -121,7 +128,9 @@ $('throw').addEventListener('click', () => sendThrow(0.7, 'button'));
 // ---------- optional motion controls ----------
 let neutralGamma = 0;
 let lastGamma = 0;
+let smoothedAim = 0;
 const detector = new ThrowDetector();
+const aimHistory = new AimHistory();
 
 $('motion-btn').addEventListener('click', async () => {
   const status = $('motion-status');
@@ -136,20 +145,27 @@ $('motion-btn').addEventListener('click', async () => {
   window.addEventListener('deviceorientation', (e) => {
     if (e.gamma === null) return;
     lastGamma = e.gamma;
-    aimSlider.value = String(aimFromGamma(e.gamma, neutralGamma));
+    // Smooth out hand shake, and remember recent aims for when a flick comes in.
+    smoothedAim += (aimFromGamma(e.gamma, neutralGamma) - smoothedAim) * AIM_SMOOTHING;
+    aimSlider.value = String(smoothedAim);
+    aimHistory.push(smoothedAim, performance.now());
   });
   window.addEventListener('devicemotion', (e) => {
     const m = motionMagnitude(e);
     if (m === null) return;
-    const power = detector.feed(m, performance.now());
-    if (power !== null) sendThrow(power, 'motion');
+    const now = performance.now();
+    const power = detector.feed(m, now);
+    // Aim where the phone pointed just before the flick, not mid-swing.
+    if (power !== null) sendThrow(power, 'motion', aimHistory.before(now));
     status.textContent = `Motion on. Flick to throw. (peak ${detector.peak.toFixed(0)})`;
   });
   $('calibrate-btn').hidden = false;
   $('motion-btn').hidden = true;
-  status.textContent = 'Motion on. Hold the phone straight up and tap Calibrate aim.';
+  status.textContent =
+    'Motion on. Hold the phone like you’re reading it (tilted back a little), point at the middle, and tap Calibrate aim.';
 });
 $('calibrate-btn').addEventListener('click', () => {
   neutralGamma = lastGamma;
+  smoothedAim = 0;
   aimSlider.value = '0';
 });

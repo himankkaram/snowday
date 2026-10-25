@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { angleToSteer, applyDeadzone, smooth } from '../client/src/input/steering';
-import { ThrowDetector, aimFromGamma } from '../client/src/phone/motion';
+import { AimHistory, ThrowDetector, aimFromGamma } from '../client/src/phone/motion';
 
 describe('steering helpers', () => {
   it('deadzone zeroes small wobble and still reaches full lock', () => {
@@ -45,5 +45,25 @@ describe('ThrowDetector (synthetic data; real-phone tuning still needed)', () =>
   it('aim from tilt is relative to calibration and clamped', () => {
     expect(aimFromGamma(10, 10)).toBe(0);
     expect(aimFromGamma(80, 0)).toBe(1);
+  });
+});
+
+describe('AimHistory (aim from just before the flick)', () => {
+  it('returns the aim from before the swing, not during it', () => {
+    const h = new AimHistory();
+    for (let t = 0; t <= 1000; t += 20) h.push(t < 800 ? 0.5 : -0.9, t); // flick wrecks the aim at 800ms
+    expect(h.before(1000, 250)).toBe(0.5);
+  });
+  it('falls back to the oldest sample, then to 0', () => {
+    const h = new AimHistory();
+    expect(h.before(100)).toBe(0);
+    h.push(0.3, 90);
+    expect(h.before(100, 250)).toBe(0.3);
+  });
+  it('forgets samples older than it needs', () => {
+    const h = new AimHistory(500);
+    h.push(0.8, 0);
+    h.push(0.1, 2000);
+    expect(h.before(2000, 1000)).toBe(0.1);
   });
 });
