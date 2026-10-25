@@ -3,8 +3,7 @@
  *
  * This runs on the ESP32 strapped to the skateboard. It reads how far the board
  * is tilted, turns that into a steering number between -1 (full left) and 1
- * (full right), and sends it to the laptop over the USB cable. When the game
- * says the rider got hit, it buzzes.
+ * (full right), and sends it to the laptop over the USB cable.
  *
  * Works with either an ADXL345 or an MPU-6050 sensor. It figures out which one
  * is plugged in by itself, so you don't need to change anything.
@@ -16,16 +15,15 @@
  * If you change these, change shared/protocol.ts too or the game stops listening.
  *   We send:     S,<steer>   steering value, about 50 times a second
  *                I,<text>    info for debugging (sensor found, calibrated, etc.)
- *   We receive:  H           rider got hit: buzz
- *                L,<effect>  LED mode (we have no LED, so this is ignored)
- *                C           recalibrate (rider stands still and level first)
+ *   We receive:  C           recalibrate (rider stands still and balanced first)
+ *                The game also sends H (hit) and L,<effect> (LED). This board has no
+ *                buzzer or LED, so it ignores them.
  */
 #include <Wire.h>
 #include <math.h>
 
 const int PIN_SDA = 21;
 const int PIN_SCL = 22;
-const int PIN_MOTOR = 25;  // buzzer or vibration module
 
 // ---------- Things you'll probably want to tweak while testing ----------
 
@@ -42,20 +40,22 @@ const float MAX_TILT_DEG = 12.0;
 // first 8% of tilt in either direction does nothing.
 const float DEADZONE = 0.08;
 
+// Calibration only accepts a reading this close to level. The board is a seesaw, so with
+// nobody on it, it rests tipped onto one end. Calibrating there would make "balanced"
+// look like a hard lean and pin the rider to the edge of the screen.
+const float CAL_MAX_DEG = 10.0;
+
 // Smoothing. Lower = steadier but slower to react, higher = twitchier.
 const float FILTER_ALPHA = 0.2;
 
 const unsigned long SAMPLE_MS = 10;      // read the sensor 100 times a second
 const unsigned long SEND_MS = 20;        // send steering 50 times a second
-const unsigned long HIT_MS = 250;        // how long one hit buzzes
-const unsigned long MAX_BUZZ_MS = 1500;  // never buzz longer than this in one go, even if hits pile up
 
 // ---------- Running state ----------
 float neutralDeg = 0;   // the tilt reading when the rider is standing level
 float filteredDeg = 0;  // smoothed tilt reading
 bool sensorOk = false;
 unsigned long lastSample = 0, lastSend = 0, lastSensorRetry = 0;
-unsigned long hitUntil = 0, buzzStartedAt = 0;
 String inbox;  // collects incoming characters until we get a full line
 
 // ---------- Talking to the sensor ----------
@@ -162,7 +162,8 @@ float readTiltDeg() {
 }
 
 // Records "level" as whatever the board reads right now, averaged over about
-// a second. Have the rider stand still in the middle before this runs.
+// a second. Have the rider stand still and balanced in the middle, then press C.
+// If the board is clearly tipped (e.g. resting on one end), it refuses and keeps the old value.
 void calibrate() {
   float sum = 0;
   int n = 0;
@@ -172,7 +173,12 @@ void calibrate() {
     delay(10);
   }
   if (n > 50) {  // only trust it if most readings worked
-    neutralDeg = sum / n;
+    float avg = sum / n;
+    if (fabs(avg) > CAL_MAX_DEG) {
+      Serial.printf("I,calibration skipped: board tipped %.1f deg. Stand level and press C\n", avg);
+      return;
+    }
+    neutralDeg = avg;
     filteredDeg = neutralDeg;
     Serial.printf("I,calibrated neutral=%.2f deg\n", neutralDeg);
   } else {
@@ -182,12 +188,10 @@ void calibrate() {
 
 
 // Deals with one line sent from the laptop. Anything we don't recognise
-// (like the game's LED messages) is simply ignored.
+// (like the game's hit and LED messages) is simply ignored.
 void handleCommand(String cmd) {
   cmd.trim();
-  if (cmd == "H") {
-    hitUntil = millis() + HIT_MS;
-  } else if (cmd == "C") {
+  if (cmd == "C") {
     calibrate();
   }
 }
@@ -195,18 +199,19 @@ void handleCommand(String cmd) {
 // setup() runs once when the board powers on.
 void setup() {
   Serial.begin(115200);
-  pinMode(PIN_MOTOR, OUTPUT);
-  digitalWrite(PIN_MOTOR, LOW);  // make sure nothing buzzes on start-up
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);
   delay(200);  // give the sensor a moment to power up
   sensorOk = sensorInit();
-  if (sensorOk) calibrate();
+  // No automatic calibration here: with nobody on it the board rests tipped onto one end.
+  // Start from "level = 0 degrees" (the sensor lies flat on the deck), then press C on the
+  // host with the rider balanced to fine-tune.
+  if (sensorOk) Serial.println("I,ready: level = 0 deg. Press C with the rider balanced to fine-tune");
   else Serial.println("I,no ADXL345/MPU-6050 found: check SDA/SCL/3V3/GND (ADXL345: CS to 3V3)");
 }
 
 // loop() runs over and over forever. Nothing in here waits around, so reading
-// the sensor, sending steering and buzzing can all happen at the same time.
+// the sensor, sending steering and listening to the laptop all happen at once.
 void loop() {
   unsigned long now = millis();
 
@@ -221,7 +226,8 @@ void loop() {
   if (!sensorOk && now - lastSensorRetry > 1000) {
     lastSensorRetry = now;
     sensorOk = sensorInit();
-    if (sensorOk) calibrate();
+    // Keep the existing calibration: the board could be tipped at any angle right now.
+    if (sensorOk) Serial.println("I,sensor back");
     else Serial.println("I,no ADXL345/MPU-6050 found: check SDA/SCL/3V3/GND (ADXL345: CS to 3V3)");
   }
 
@@ -248,6 +254,4 @@ void loop() {
     }
     Serial.printf("S,%.3f\n", steer);
   }
-
-  updateOutputs(now);
 }
