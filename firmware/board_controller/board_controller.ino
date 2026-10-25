@@ -30,7 +30,7 @@ const int PIN_SCL = 22;
 // Which way the sensor is mounted. If tilting the board does nothing much,
 // try flipping USE_ROLL. If left steers right, flip INVERT.
 const bool USE_ROLL = false;
-const bool INVERT = false;
+const bool INVERT = true;
 
 // How many degrees of tilt counts as "full lock". The board only rocks about
 // 10-15 degrees, so keep this small or the rider can never turn fully.
