@@ -20,12 +20,12 @@ export const HIT_DAMAGE = 10;
 /** Snowball radius in world units; a ball touching the rider's edge still counts. */
 export const SNOWBALL_RADIUS = 0.03;
 /** Flight time for a gentle throw (power 0) and the hardest throw (power 1). */
-export const FLIGHT_MS_SLOW = 1000;
-export const FLIGHT_MS_FAST = 600;
+export const FLIGHT_MS_SLOW = 800;
+export const FLIGHT_MS_FAST = 450;
 export const MAX_SNOWBALLS = 60;
 /** Per-player throw cooldown. Grows with the square root of the number of throwers, capped. */
-export const BASE_COOLDOWN_MS = 2000;
-export const MAX_COOLDOWN_MS = 6000;
+export const BASE_COOLDOWN_MS = 1500;
+export const MAX_COOLDOWN_MS = 4500;
 export const throwCooldownMs = (players: number) =>
   Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * Math.sqrt(Math.max(1, players)));
 
